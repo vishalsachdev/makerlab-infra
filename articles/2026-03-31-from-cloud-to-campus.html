@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>From Cloud to Campus: How an AI Agent Built Our Lab's Infrastructure in One Afternoon</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.7; color: #1a1a1a; }
+h1 { font-size: 2rem; line-height: 1.2; margin-bottom: 0.5rem; }
+h2 { font-size: 1.4rem; margin-top: 2.5rem; border-bottom: 1px solid #e5e5e5; padding-bottom: 0.3rem; }
+.subtitle { font-style: italic; color: #666; font-size: 1.1rem; margin-bottom: 2rem; }
+hr { border: none; border-top: 1px solid #e5e5e5; margin: 2rem 0; }
+code { background: #f5f5f5; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
+pre { background: #f5f5f5; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #ddd; padding: 0.6rem 0.8rem; text-align: left; }
+th { background: #f9f9f9; font-weight: 600; }
+ul, ol { padding-left: 1.5rem; }
+li { margin-bottom: 0.4rem; }
+strong { font-weight: 600; }
+a { color: #2563eb; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.footer { font-style: italic; color: #666; margin-top: 2rem; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<h1>From Cloud to Campus: How an AI Agent Built Our Lab's Infrastructure in One Afternoon</h1>
+<p class="subtitle">An afternoon that started with "install this agent on a remote computer" and ended with a fully operational campus server platform &mdash; zero cloud bills, zero IT tickets.</p>
+
+<hr>
+
+<h2>The Starting Point</h2>
+
+<p>I walked into this session with a simple idea: install an open-source AI agent called <a href="https://github.com/NousResearch/hermes-agent">Hermes</a> on an iMac sitting in our university MakerLab. Hermes is a self-improving agent by Nous Research that creates skills from experience, connects to messaging platforms, and runs scheduled tasks. I wanted it as a remote experiment runner I could talk to via Telegram.</p>
+
+<p>What I didn't expect was that three hours later, we'd have:</p>
+
+<ul>
+<li>An always-on AI agent reachable via Telegram from anywhere</li>
+<li>A Cloudflare Tunnel serving five subdomains from a machine behind a university firewall</li>
+<li>Four teaching databases migrated from AWS (saving $100+/month)</li>
+<li>A custom SQL API that lets students query PostgreSQL from Google Colab</li>
+<li>A Canvas LMS page teaching students how to use it all</li>
+<li>A graduated GitHub repository documenting the entire stack</li>
+</ul>
+
+<p>All on a 2019 iMac with 24 GB of RAM that was just sitting there.</p>
+
+<h2>The Constraints That Shaped Everything</h2>
+
+<p>University computing is a special kind of constrained environment. The MakerLab iMac sits behind an institutional firewall that blocks all inbound connections. I don't have the sudo password. I can't install Docker Desktop (it needs a GUI license click). There's no Homebrew. GitHub Actions is disabled on my account. Oh, and I can't physically walk to the machine &mdash; I'm doing everything remotely.</p>
+
+<p>Every one of those constraints forced a creative solution:</p>
+
+<p><strong>No physical access?</strong> Tailscale mesh VPN. The iMac was already on Tailscale. I installed Tailscale on my MacBook, and suddenly I had a 16ms direct WireGuard tunnel between them. <code>ssh makerlab</code> just works.</p>
+
+<p><strong>No inbound ports?</strong> Cloudflare Tunnel. One binary (<code>cloudflared</code>) creates an outbound-only encrypted tunnel to Cloudflare's edge. Students hit <code>sql.illinihunt.org</code> and traffic routes through Cloudflare's CDN, down the tunnel, to a Python process on localhost. The university firewall never knows, because all connections are outbound HTTPS.</p>
+
+<p><strong>No sudo?</strong> Everything installs to <code>~/.local/</code>. PostgreSQL 16.8 runs from <code>~/.local/pgsql/</code>. Cloudflared lives in <code>~/.local/bin/</code>. The Hermes agent has its own venv. No root privileges needed, which is actually <em>more secure</em> &mdash; a compromised service can't escalate to root.</p>
+
+<p><strong>No Xcode CLI tools?</strong> There's a headless trick: touch a magic file, then <code>softwareupdate</code> lists the CLI tools package and installs it without the GUI dialog. This is how CI systems get Git on Mac machines.</p>
+
+<h2>The Stack That Emerged</h2>
+
+<p>What's interesting is that we didn't plan this stack. It emerged from solving one problem at a time:</p>
+
+<ol>
+<li><strong>Hermes Agent</strong> &mdash; the original goal. Installed, configured with OpenAI's GPT-5.4, Telegram gateway running. Now I can message my lab iMac from my phone.</li>
+<li><strong>Cloudflare Tunnel</strong> &mdash; needed to expose services. One tunnel, five subdomains, all routed through <code>config.yml</code>. The <code>illinihunt.org</code> domain was already on Cloudflare from a student project (IlliniHunt &mdash; a Product Hunt for UIUC), so the DNS and SSL came free.</li>
+<li><strong>PostgreSQL</strong> &mdash; started as "maybe we should host a database for students." Ended with four teaching databases migrated from AWS RDS, a custom read-only student user, and a web-based SQL editor (pgAdmin) at <code>db.illinihunt.org</code>.</li>
+<li><strong>SQL API</strong> &mdash; the bridge that makes it all work for teaching. A 60-line Python HTTP server that accepts <code>POST {"database": "sales", "query": "SELECT ..."}</code> and returns JSON. Students paste two cells into Google Colab and they're running SQL against real data. No packages to install, no connection strings to debug.</li>
+<li><strong>launchd persistence</strong> &mdash; four <code>.plist</code> files in <code>~/Library/LaunchAgents/</code> so everything survives reboots. The iMac can lose power and come back with all services running.</li>
+</ol>
+
+<h2>The Database Migration: AWS to a Closet</h2>
+
+<p>The most satisfying part was deleting the AWS RDS instance.</p>
+
+<p>We'd been running a <code>db.m7g.large</code> MySQL instance on Amazon RDS for the BADM 554 (Enterprise Database Management) course. Four databases, 85,000+ rows of real Yelp data for Champaign-Urbana, classic Northwind traders, textbook exercises. Cost: roughly $100/month for a machine that students only use during Monday evening class.</p>
+
+<p>The migration went like this:</p>
+
+<ol>
+<li>Connected to RDS via AWS CloudShell, dumped all four databases with <code>mysqldump</code></li>
+<li>Uploaded to S3 as a transfer mechanism (CloudShell can't SSH out)</li>
+<li>Downloaded on my MacBook, SCP'd to the iMac</li>
+<li>Wrote a Python script to convert MySQL syntax to PostgreSQL (backticks to double quotes, <code>AUTO_INCREMENT</code> to <code>SERIAL</code>, <code>datetime</code> to <code>timestamp</code>, fixing <code>0000-00-00</code> dates)</li>
+<li>Imported into PostgreSQL on the iMac</li>
+<li>Created a read-only <code>badmstudent</code> user</li>
+<li>Verified all queries work, including confirming that <code>INSERT</code> is properly blocked</li>
+<li>Deleted the RDS instance. Watched "Deleting" appear in the AWS console.</li>
+</ol>
+
+<p>The Canvas page update took about two minutes &mdash; replace the MySQL connection instructions with a simple <code>sql()</code> helper function that hits our new API.</p>
+
+<h2>The Meta-Layer: An Agent Managing Its Own Machine</h2>
+
+<p>Here's the part that still makes me smile. During setup, I needed to install Homebrew on the iMac. The installer needs sudo, and I'd forgotten the password. I told Hermes &mdash; via Telegram, from my phone &mdash; to run the install command. It offered a safer two-step version (download, then execute), asked for approval, and attempted the install. The agent I'd just installed was already helping manage the machine it lives on.</p>
+
+<p>This is the promise of always-on agents. Not replacing human judgment, but being a persistent presence on a machine you can't always reach. When a student reports that the database is down at 11 PM, I can message the Hermes bot: "check if PostgreSQL is running." It has shell access. It can diagnose and potentially restart services. I don't need to VPN in, find the SSH key, remember the Tailscale hostname.</p>
+
+<h2>What I Learned</h2>
+
+<p><strong>Constraints breed creativity.</strong> The no-sudo, no-Docker, no-inbound-ports environment forced a stack that's arguably better than what I would have built with full access. User-space installs are more secure. Cloudflare Tunnel is more reliable than port forwarding. A lightweight SQL API is a better student experience than raw database connections.</p>
+
+<p><strong>The compound effect is real.</strong> Each tool we installed made the next one easier. Tailscale enabled SSH. SSH enabled everything else. Cloudflare Tunnel enabled student access. Student access justified migrating the database. The database migration justified deleting AWS. Each step created momentum for the next.</p>
+
+<p><strong>Teaching infrastructure should be self-hosted.</strong> Cloud databases for teaching are an odd tax. Students use them for 3 hours a week, 15 weeks a semester. The MakerLab has 10 iMacs sitting idle most of the time. Running PostgreSQL on one of them is free, fast, and teaches students something real about infrastructure.</p>
+
+<h2>The Numbers</h2>
+
+<table>
+<tr><th>Metric</th><th>Before</th><th>After</th></tr>
+<tr><td>Monthly cloud cost</td><td>~$100 (AWS RDS)</td><td>$0</td></tr>
+<tr><td>Student setup steps</td><td>4 cells (install packages, connection string)</td><td>2 cells (just the helper function)</td></tr>
+<tr><td>Database engine</td><td>MySQL 8.0</td><td>PostgreSQL 16.8</td></tr>
+<tr><td>Hosting</td><td>AWS us-east-2</td><td>MakerLab closet, Champaign IL</td></tr>
+<tr><td>Latency (from campus)</td><td>~30ms to Ohio</td><td>&lt;1ms to localhost via tunnel</td></tr>
+<tr><td>Services running</td><td>1 (database)</td><td>5 (agent, database, pgAdmin, SQL API, web)</td></tr>
+<tr><td>Time to build</td><td>N/A (pre-existing)</td><td>~3 hours</td></tr>
+</table>
+
+<h2>What's Next</h2>
+
+<p>The iMac is now a platform, not just a database host. The Cloudflare Tunnel can route any number of subdomains. The MakerLab has 10 machines total &mdash; only one is on Tailscale right now. The roadmap includes:</p>
+
+<ul>
+<li><strong>Deploying the BADM 554 WhatsApp bot</strong> (currently on a VPS) to <code>bot.illinihunt.org</code></li>
+<li><strong>Portainer</strong> for container management across all 10 machines</li>
+<li><strong>Hermes multi-agent experiments</strong> &mdash; spawning sub-agents for parallel research tasks</li>
+<li><strong>Student project hosting</strong> &mdash; giving student teams their own <code>project.illinihunt.org</code> subdomains</li>
+</ul>
+
+<p>The most interesting question is what happens when you give students access to infrastructure that costs nothing to run. When the marginal cost of a new subdomain is zero, experimentation becomes free. That's the kind of environment where interesting things happen.</p>
+
+<hr>
+
+<p class="footer">This article was written as part of a live collaboration session using Claude Code. The entire infrastructure &mdash; from first SSH to live databases &mdash; was built in a single afternoon.</p>
+<p class="footer">Repository: <a href="https://github.com/vishalsachdev/makerlab-infra">makerlab-infra</a></p>
+
+</body>
+</html>
