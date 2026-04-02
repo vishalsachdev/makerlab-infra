@@ -109,8 +109,18 @@ Each subdomain also has a **null worker route** on Cloudflare to bypass the `ill
 - [ ] Recover/reset sudo password for Homebrew install
 - [ ] Delete S3 bucket `badm554-temp-export` after confirming DB stability
 - [ ] Set up launchd for Hermes gateway (currently manual start)
+- [ ] Enable auto-login on iMac so services survive power cycles without physical access
 
 ## Session Log
+### 2026-04-01
+- Troubleshot iMac connectivity after unexpected power-off/reboot
+  - Checked Tailscale admin console: iMac (`bus-c02z11ypjv40`, 100.91.229.88) last seen 6:35 PM CDT — offline since
+  - Local IPs: 10.192.174.87 / 128.174.135.157
+  - Root cause: iMac likely sitting at login screen — LaunchAgents (cloudflared, PostgreSQL, pgAdmin, SQL API) and Tailscale don't start until user logs in
+  - Workaround: VPN to campus network → SSH to local IP (Remote Login may work from login screen)
+  - Identified permanent fix needed: enable auto-login for admin account so power cycles recover automatically
+- Next: Get physical/remote access to log in as admin. Enable auto-login. Consider adding `- [ ] Enable auto-login on iMac` to remaining setup.
+
 ### 2026-03-31
 - Installed Tailscale on MacBook, connected to MakerLab tailnet (16ms direct)
 - Set up SSH key auth + alias (`ssh makerlab`)
